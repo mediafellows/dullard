@@ -75,12 +75,98 @@ class Dullard::Workbook
     48 => '##0.0E+0',
     49 => '@',
   }
+  
+  COLOR_SCHEMES = {
+    0 => nil,
+    1 => nil,
+    2 => '1F497D',
+    3 => 'EEECE1',
+    4 => '4F81BD',
+    5 => 'C0504D',
+    6 => '9BBB59',
+    7 => '8064A2',
+    8 => '4BACC6',
+    9 => 'F79646',
+    10 => '0000FF',
+    11 => '800080'
+  }
+  
+  # Source: http://msdn.microsoft.com/en-us/library/documentformat.openxml.spreadsheet.indexedcolors%28v=office.14%29.aspx
+  COLOR_INDEXED = {
+    0 => '000000',
+    1 => 'FFFFFF',
+    2 => 'FF0000',
+    3 => '00FF00',
+    4 => '0000FF',
+    5 => 'FFFF00',
+    6 => 'FF00FF',
+    7 => '00FFFF',
+    8 => '000000',
+    0 => 'FFFFFF',
+    10 => 'FF0000',
+    11 => '00FF00',
+    12 => '0000FF',
+    13 => 'FFFF00',
+    14 => 'FF00FF',
+    15 => '00FFFF',
+    16 => '800000',
+    17 => '008000',
+    18 => '000080',
+    19 => '808000',
+    20 => '800080',
+    21 => '008080',
+    22 => 'C0C0C0',
+    23 => '808080',
+    24 => '9999FF',
+    25 => '993366',
+    26 => 'FFFFCC',
+    27 => 'CCFFFF',
+    28 => '660066',
+    29 => 'FF8080',
+    30 => '0066CC',
+    31 => 'CCCCFF',
+    32 => '000080',
+    33 => 'FF00FF',
+    34 => 'FFFF00',
+    35 => '00FFFF',
+    36 => '800080',
+    37 => '800000',
+    38 => '008080',
+    39 => '0000FF',
+    40 => '00CCFF',
+    41 => 'CCFFFF',
+    42 => 'CCFFCC',
+    43 => 'FFFF99',
+    44 => '99CCFF',
+    45 => 'FF99CC',
+    46 => 'CC99FF',
+    47 => 'FFCC99',
+    48 => '3366FF',
+    49 => '33CCCC',
+    50 => '99CC00',
+    51 => 'FFCC00',
+    52 => 'FF9900',
+    53 => 'FF6600',
+    54 => '666699',
+    55 => '969696',
+    56 => '003366',
+    57 => '339966',
+    58 => '003300',
+    59 => '333300',
+    60 => '993300',
+    61 => '993366',
+    62 => '333399',
+    63 => '333333',
+    64 => nil,
+    65 => nil
+  }
 
-  def initialize(file, user_defined_formats = {})
+  def initialize(file, user_defined_formats = {}, include_formatting = true)
     @file = file
     @zipfs = Zip::File.open(@file)
     @user_defined_formats = user_defined_formats
-    read_styles
+    @formatting = include_formatting
+    read_styles(include_formatting)
   end
 
   def sheets
@@ -89,7 +175,7 @@ class Dullard::Workbook
   end
 
   def string_table
-    @string_tabe ||= read_string_table
+    @string_table ||= read_string_table
   end
 
   def read_string_table
@@ -107,10 +193,19 @@ class Dullard::Workbook
     @string_table
   end
 
-  def read_styles
+  def has_formatting?
+    @formatting
+  end
+
+  def read_styles(include_formatting)
     doc = Nokogiri::XML(@zipfs.file.open("xl/styles.xml"))
     
     @num_formats = {}
+    if include_formatting
+      @font_formats = {}
+      @fill_formats = {}
+      @border_formats = {}
+    end
     @cell_xfs = []
     
     doc.css('/styleSheet/numFmts/numFmt').each do |numFmt|
@@ -118,18 +213,80 @@ class Dullard::Workbook
       formatCode = numFmt.attributes['formatCode'].value
       @num_formats[numFmtId] = formatCode
     end
-
-    doc.css('/styleSheet/cellXfs/xf').each do |xf|
-      numFmtId = xf.attributes['numFmtId'].value.to_i
-      @cell_xfs << numFmtId
+    
+    if include_formatting
+      doc.css('/styleSheet/fonts/font').each_with_index do |font, i|       
+        @font_formats[i] = {
+          b: !font.css('/b').empty?,
+          i: !font.css('/i').empty?,
+          u: !font.css('/u').empty?,
+          sz: font.css('/sz').empty? ? nil : font.css('/sz').first.attributes['val'].value.to_i,
+          name: font.css('/name').empty? ? nil : font.css('/name').first.attributes['val'].value,
+          color: font.css('/color').empty? ? nil : node2color(font.css('/color').first)
+        }
+      end
+      # TODO: only accepts "none" and "solid" pattern types, and as a result, no support for "bgColor" attibute
+      doc.css('/styleSheet/fills/fill/patternFill').each_with_index do |fill, i|       
+        @fill_formats[i] = {
+          type: fill.attributes['patternType'].value.to_s == 'none' || fill.attributes['patternType'].value.to_s == 'solid' ? fill.attributes['patternType'].value : 'solid',
+          fgColor: fill.css('/fgColor').empty? ? nil : node2color(fill.css('/fgColor').first)
+          #bgColor: fill.css('/bgColor').empty? ? nil : node2color(fill.css('/bgColor').first) 
+        }
+      end
+      # TODO: doesn't handle diagonal borders, doesn't accept colors yet 
+      doc.css('/styleSheet/borders/border').each_with_index do |border, i|
+        leftBorder = border.css('/left').first
+        rightBorder = border.css('/right').first
+        topBorder = border.css('/top').first
+        bottomBorder = border.css('/bottom').first     
+        @border_formats[i] = {
+          left: leftBorder.attributes.length == 0 ? nil : leftBorder.attributes['style'].value,
+          right: rightBorder.attributes.length == 0 ? nil : rightBorder.attributes['style'].value,
+          top: topBorder.attributes.length == 0 ? nil : topBorder.attributes['style'].value,
+          bottom: bottomBorder.attributes.length == 0 ? nil : bottomBorder.attributes['style'].value
+        }
+      end
+    end
+    doc.css('/styleSheet/cellXfs/xf').each do |xf| 
+      @cell_xfs << (!include_formatting \
+      ? { numFmtId: xf.attributes['numFmtId'].value.to_i } 
+      : {
+        numFmtId: xf.attributes['numFmtId'].value.to_i,
+        fontId: xf.attributes['fontId'].value.to_i,
+        fillId: xf.attributes['fillId'].value.to_i,
+        borderId: xf.attributes['borderId'].value.to_i
+      })
     end
   end
+  
+  def external_links
+    @external_links || read_external_links
+  end
 
+  def read_external_links
+    @external_links = []
+    
+    # Loop over all files located in xl/externalLinks/_rels and extract the filenames
+    # Code borrowed from http://www.rubydoc.info/github/rubyzip/rubyzip/master/Zip/FileSystem/ZipFsDir#foreach-instance_method
+    path = "xl/externalLinks/_rels/"
+    subDirEntriesRegex = Regexp.new("^#{path}([^/]+)$")
+    @zipfs.each do |fileName|
+      match = subDirEntriesRegex.match(fileName.to_s)
+      if !match.nil?
+        doc = Nokogiri::XML(@zipfs.file.open(fileName.to_s))
+        doc.css('/Relationships/Relationship').each do |external_link|
+          @external_links << { :id => match[1].reverse[9].to_i, :target => external_link.attributes['Target'].value } 
+        end
+      end
+    end
+    
+    @external_links
+  end
   
   # Code borrowed from Roo (https://github.com/hmcgowan/roo/blob/master/lib/roo/excelx.rb)
   # convert internal excelx attribute to a format
   def attribute2format(s)
-    id = @cell_xfs[s.to_i].to_i
+    id = @cell_xfs[s.to_i][:numFmtId].to_i
     result = @num_formats[id]
 
     if result == nil
@@ -149,6 +306,33 @@ class Dullard::Workbook
       @user_defined_formats[format]
     else
       :float
+    end
+  end
+
+  def attribute2FontFmt(s)
+    id = @cell_xfs[s.to_i][:fontId].to_i
+    return id == 0 ? nil : @font_formats[id]
+  end
+  
+  def attribute2FillFmt(s)
+    id = @cell_xfs[s.to_i][:fillId].to_i
+    return id == 0 ? nil : @fill_formats[id]
+  end
+  
+  def attribute2BorderFmt(s)
+    id = @cell_xfs[s.to_i][:borderId].to_i
+    return id == 0 ? nil : @border_formats[id]
+  end
+
+  def node2color(color_node)
+    if color_node.attributes.has_key? 'theme'
+      COLOR_SCHEMES[color_node.attributes['theme'].value.to_i]
+    elsif color_node.attributes.has_key? 'rgb'
+      color_node.attributes['rgb'].value[2..-1]
+    elsif color_node.attributes.has_key? 'indexed'
+      COLOR_INDEXED[color_node.attributes['indexed'].value.to_i]
+    else
+      nil
     end
   end
 
@@ -174,7 +358,7 @@ class Dullard::Sheet
   def string_lookup(i)
     @workbook.string_table[i]
   end
-
+  
   def rows
     Enumerator.new(row_count) do |y|
       next unless @file
@@ -183,6 +367,9 @@ class Dullard::Sheet
       row = nil
       column = nil
       cell_type = nil
+      node_value_type = nil
+      row_num = 0
+      
       Nokogiri::XML::Reader(@file).each do |node|
         case node.node_type
         when Nokogiri::XML::Reader::TYPE_ELEMENT
@@ -190,13 +377,24 @@ class Dullard::Sheet
           when "row"
             row = []
             column = 0
+            row_num += 1
+            
+            # If sheet skips past rows, yield empty ones
+            rrow = node.attributes["r"]
+            if rrow
+              while rrow.to_i > row_num
+                y.yield []
+                row_num += 1
+              end 
+            end
+            
+            # If this is an empty row itself (no child nodes), yield an empty one
+            if node.empty_element?
+              y.yield []
+            end
+            
             next
           when "c"
-            if node.attributes['t'] != 's' && node.attributes['t'] != 'b'
-              cell_format_index = node.attributes['s'].to_i
-              cell_type = @workbook.format2type(@workbook.attribute2format(cell_format_index))
-            end
-
             rcolumn = node.attributes["r"]
             if rcolumn
               rcolumn.delete!("0-9")
@@ -205,33 +403,67 @@ class Dullard::Sheet
                 column += 1
               end
             end
+
+            row << {c: column, v: nil, f: nil}
+
+            if node.attributes.has_key?('s') && (@workbook.has_formatting? || (node.attributes['t'] != 's' && node.attributes['t'] != 'b'))
+              cell_format_index = node.attributes['s'].to_i
+              cell_type = @workbook.format2type(@workbook.attribute2format(cell_format_index))
+
+              if @workbook.has_formatting?
+                row.last[:font] = @workbook.attribute2FontFmt(cell_format_index)
+                row.last[:fill] = @workbook.attribute2FillFmt(cell_format_index)
+                row.last[:border] = @workbook.attribute2BorderFmt(cell_format_index)
+              end
+            else
+              if @workbook.has_formatting?
+                row.last[:font] = nil
+                row.last[:fill] = nil
+                row.last[:border] = nil
+              end
+            end
+
             shared = (node.attribute("t") == "s")
             column += 1
+            next
+          when "v"
+            node_value_type = "v"
+            next
+          when "f"
+            node_value_type = "f"
+            next
+          when "t"
+            node_value_type = "t"
             next
           end
         when Nokogiri::XML::Reader::TYPE_END_ELEMENT
           if node.name == "row"
-            y << row
+            y.yield row
             next
           end
         end
+
         value = node.value
-
         if value
-          case cell_type
-            when :datetime
-            when :time
-            when :date
-              value = (DateTime.new(1899,12,30) + value.to_f)
-            when :percentage # ? TODO
-            when :float
-              value = value.to_f
-            else
-              # leave as string
+          if node_value_type == 'v' || node_value_type == 't'
+            case cell_type
+              when :datetime
+              when :time
+              when :date
+                value = (DateTime.new(1899,12,30) + value.to_f)
+              when :percentage # ? TODO
+              when :float
+                value = value.to_f
+              else
+                # leave as string
+            end
+            cell_type = nil
+            
+            row.last[:v] = (shared ? string_lookup(value.to_i) : value)
+          elsif node_value_type == 'f'
+            row.last[:f] = value
           end
-          cell_type = nil
-
-          row << (shared ? string_lookup(value.to_i) : value)
+          node_value_type = nil
         end
       end
     end

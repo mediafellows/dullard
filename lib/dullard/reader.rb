@@ -192,7 +192,7 @@ class Dullard::Workbook
     end
     @string_table
   end
-
+  
   def has_formatting?
     @formatting
   end
@@ -353,6 +353,7 @@ class Dullard::Sheet
     @id = id
     @index = index
     @file = @workbook.zipfs.file.open(path) if @workbook.zipfs.file.exist?(path)
+    @shared_formulas = []
   end
 
   def string_lookup(i)
@@ -363,7 +364,10 @@ class Dullard::Sheet
     Enumerator.new(row_count) do |y|
       next unless @file
       @file.rewind
+      
       shared = false
+      shared_formula = false
+      formula_value = nil
       row = nil
       column = nil
       cell_type = nil
@@ -423,13 +427,33 @@ class Dullard::Sheet
               end
             end
 
-            shared = (node.attribute("t") == "s")
+            shared = node.attribute("t") == "s"
             column += 1
             next
           when "v"
             node_value_type = "v"
             next
           when "f"
+            shared_formula = node.attribute("t") == "shared"
+            formula_value = nil
+            
+            if shared_formula
+              si = node.attribute("si").to_i
+              if @shared_formulas[si]
+                formula_value = generate_formula(row_num, column, @shared_formulas[si])
+              else
+                formula_value = node.inner_xml
+                @shared_formulas << {
+                  row: row_num,
+                  col: column,
+                  f: formula_value
+                }
+              end
+              
+              # If shared, formula may not have a "child" node containing the formula itself. Instead, record it here
+              row.last[:f] = formula_value
+            end
+             
             node_value_type = "f"
             next
           when "t"
@@ -444,6 +468,7 @@ class Dullard::Sheet
         end
 
         value = node.value
+        
         if value
           if node_value_type == 'v' || node_value_type == 't'
             case cell_type
@@ -461,8 +486,10 @@ class Dullard::Sheet
             
             row.last[:v] = (shared ? string_lookup(value.to_i) : value)
           elsif node_value_type == 'f'
+            # If it's a shared formula, this will never be called, since there's no "node" containing the formula string
             row.last[:f] = value
           end
+          
           node_value_type = nil
         end
       end
@@ -502,6 +529,23 @@ class Dullard::Sheet
         end
       end
     end
+  end
+
+  def generate_formula(new_row, new_col, formula)
+    row_diff = new_row - formula[:row]
+    col_diff = new_col - formula[:col]
+    
+    return formula[:f]
+      .gsub(/\$([[:upper:]]+)(\d+)/) { 
+        # Fixed column, variable row
+        "$#{$1}#{$2.to_i + row_diff}" 
+      }.gsub(/(?<!\$)([[:upper:]]+)\$(\d+)/) { 
+        # Variable column, fixed row
+        "#{self.class.column_names[self.class.column_names.index($1) + col_diff]}$#{$2}" 
+      }.gsub(/(?<!\$)([[:upper:]]+)(\d+)/) { 
+        # Variable column, variable row
+        "#{self.class.column_names[self.class.column_names.index($1) + col_diff]}#{$2.to_i + row_diff}" 
+      }
   end
 
   private

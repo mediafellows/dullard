@@ -442,7 +442,7 @@ class Dullard::Sheet
               if @shared_formulas[si]
                 formula_value = generate_formula(row_num, column, @shared_formulas[si])
               else
-                formula_value = node.inner_xml
+                formula_value = node.text
                 @shared_formulas << {
                   row: row_num,
                   col: column,

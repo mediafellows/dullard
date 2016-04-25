@@ -45,7 +45,7 @@ class Dullard::Workbook
     'mm/dd/yyyy' => :date,
   }
 
-  STANDARD_FORMATS = { 
+  STANDARD_FORMATS = {
     0 => 'General',
     1 => '0',
     2 => '0.00',
@@ -75,7 +75,7 @@ class Dullard::Workbook
     48 => '##0.0E+0',
     49 => '@',
   }
-  
+
   COLOR_SCHEMES = {
     0 => nil,
     1 => nil,
@@ -90,7 +90,7 @@ class Dullard::Workbook
     10 => '0000FF',
     11 => '800080'
   }
-  
+
   # Source: http://msdn.microsoft.com/en-us/library/documentformat.openxml.spreadsheet.indexedcolors%28v=office.14%29.aspx
   COLOR_INDEXED = {
     0 => '000000',
@@ -192,14 +192,14 @@ class Dullard::Workbook
     end
     @string_table
   end
-  
+
   def has_formatting?
     @formatting
   end
 
   def read_styles(include_formatting)
     doc = Nokogiri::XML(@zipfs.file.open("xl/styles.xml"))
-    
+
     @num_formats = {}
     if include_formatting
       @font_formats = {}
@@ -207,15 +207,15 @@ class Dullard::Workbook
       @border_formats = {}
     end
     @cell_xfs = []
-    
+
     doc.css('/styleSheet/numFmts/numFmt').each do |numFmt|
       numFmtId = numFmt.attributes['numFmtId'].value.to_i
       formatCode = numFmt.attributes['formatCode'].value
       @num_formats[numFmtId] = formatCode
     end
-    
+
     if include_formatting
-      doc.css('/styleSheet/fonts/font').each_with_index do |font, i|       
+      doc.css('/styleSheet/fonts/font').each_with_index do |font, i|
         @font_formats[i] = {
           b: !font.css('/b').empty?,
           i: !font.css('/i').empty?,
@@ -226,19 +226,19 @@ class Dullard::Workbook
         }
       end
       # TODO: only accepts "none" and "solid" pattern types, and as a result, no support for "bgColor" attibute
-      doc.css('/styleSheet/fills/fill/patternFill').each_with_index do |fill, i|       
+      doc.css('/styleSheet/fills/fill/patternFill').each_with_index do |fill, i|
         @fill_formats[i] = {
           type: fill.attributes['patternType'].value.to_s == 'none' || fill.attributes['patternType'].value.to_s == 'solid' ? fill.attributes['patternType'].value : 'solid',
           fgColor: fill.css('/fgColor').empty? ? nil : node2color(fill.css('/fgColor').first)
-          #bgColor: fill.css('/bgColor').empty? ? nil : node2color(fill.css('/bgColor').first) 
+          #bgColor: fill.css('/bgColor').empty? ? nil : node2color(fill.css('/bgColor').first)
         }
       end
-      # TODO: doesn't handle diagonal borders, doesn't accept colors yet 
+      # TODO: doesn't handle diagonal borders, doesn't accept colors yet
       doc.css('/styleSheet/borders/border').each_with_index do |border, i|
         leftBorder = border.css('/left').first
         rightBorder = border.css('/right').first
         topBorder = border.css('/top').first
-        bottomBorder = border.css('/bottom').first     
+        bottomBorder = border.css('/bottom').first
         @border_formats[i] = {
           left: leftBorder.attributes.length == 0 ? nil : leftBorder.attributes['style'].value,
           right: rightBorder.attributes.length == 0 ? nil : rightBorder.attributes['style'].value,
@@ -247,9 +247,9 @@ class Dullard::Workbook
         }
       end
     end
-    doc.css('/styleSheet/cellXfs/xf').each do |xf| 
+    doc.css('/styleSheet/cellXfs/xf').each do |xf|
       @cell_xfs << (!include_formatting \
-      ? { numFmtId: xf.attributes['numFmtId'].value.to_i } 
+      ? { numFmtId: xf.attributes['numFmtId'].value.to_i }
       : {
         numFmtId: xf.attributes['numFmtId'].value.to_i,
         fontId: xf.attributes['fontId'].value.to_i,
@@ -258,14 +258,14 @@ class Dullard::Workbook
       })
     end
   end
-  
+
   def external_links
     @external_links || read_external_links
   end
 
   def read_external_links
     @external_links = []
-    
+
     # Loop over all files located in xl/externalLinks/_rels and extract the filenames
     # Code borrowed from http://www.rubydoc.info/github/rubyzip/rubyzip/master/Zip/FileSystem/ZipFsDir#foreach-instance_method
     path = "xl/externalLinks/_rels/"
@@ -275,14 +275,14 @@ class Dullard::Workbook
       if !match.nil?
         doc = Nokogiri::XML(@zipfs.file.open(fileName.to_s))
         doc.css('/Relationships/Relationship').each do |external_link|
-          @external_links << { :id => match[1].reverse[9].to_i, :target => external_link.attributes['Target'].value } 
+          @external_links << { :id => match[1].reverse[9].to_i, :target => external_link.attributes['Target'].value }
         end
       end
     end
-    
+
     @external_links
   end
-  
+
   # Code borrowed from Roo (https://github.com/hmcgowan/roo/blob/master/lib/roo/excelx.rb)
   # convert internal excelx attribute to a format
   def attribute2format(s)
@@ -313,12 +313,12 @@ class Dullard::Workbook
     id = @cell_xfs[s.to_i][:fontId].to_i
     return id == 0 ? nil : @font_formats[id]
   end
-  
+
   def attribute2FillFmt(s)
     id = @cell_xfs[s.to_i][:fillId].to_i
     return id == 0 ? nil : @fill_formats[id]
   end
-  
+
   def attribute2BorderFmt(s)
     id = @cell_xfs[s.to_i][:borderId].to_i
     return id == 0 ? nil : @border_formats[id]
@@ -359,71 +359,77 @@ class Dullard::Sheet
   def string_lookup(i)
     @workbook.string_table[i]
   end
-  
+
   def rows
     Enumerator.new(row_count) do |y|
       next unless @file
       @file.rewind
-      
+
       shared = false
       shared_formula = false
       formula_value = nil
-      row = nil
+      row = { :cells => nil }
       column = nil
       cell_type = nil
       node_value_type = nil
       row_num = 0
-      
+
       Nokogiri::XML::Reader(@file).each do |node|
         case node.node_type
         when Nokogiri::XML::Reader::TYPE_ELEMENT
           case node.name
           when "row"
-            row = []
+            row[:cells] = []
             column = 0
             row_num += 1
-            
+
             # If sheet skips past rows, yield empty ones
             rrow = node.attributes["r"]
             if rrow
               while rrow.to_i > row_num
-                y.yield []
+                y.yield({ :cells => [] })
                 row_num += 1
-              end 
+              end
             end
-            
+
             # If this is an empty row itself (no child nodes), yield an empty one
             if node.empty_element?
-              y.yield []
+              y.yield({ :cells => [] })
             end
-            
+
+            # NOTE: do this in separate methods below instead of aggregating here. No easy way to aggregate col widths in this loop
+            # # If row has a custom height set, record it in the row object
+            # if node.attributes["customHeight"] && node.attributes["customHeight"] == "1" && node.attributes["ht"]
+            #   row[:height] = node.attributes["ht"]
+            # end
+
             next
           when "c"
             rcolumn = node.attributes["r"]
             if rcolumn
               rcolumn.delete!("0-9")
               while column < self.class.column_names.size and rcolumn != self.class.column_names[column]
-                row << nil
+                row[:cells] << nil
                 column += 1
               end
             end
 
-            row << {c: column, v: nil, f: nil}
+            row[:cells] << {c: column, v: nil, f: nil}
 
             if node.attributes.has_key?('s') && (@workbook.has_formatting? || (node.attributes['t'] != 's' && node.attributes['t'] != 'b'))
               cell_format_index = node.attributes['s'].to_i
               cell_type = @workbook.format2type(@workbook.attribute2format(cell_format_index))
 
               if @workbook.has_formatting?
-                row.last[:font] = @workbook.attribute2FontFmt(cell_format_index)
-                row.last[:fill] = @workbook.attribute2FillFmt(cell_format_index)
-                row.last[:border] = @workbook.attribute2BorderFmt(cell_format_index)
+                row[:cells].last[:font] = @workbook.attribute2FontFmt(cell_format_index)
+                row[:cells].last[:fill] = @workbook.attribute2FillFmt(cell_format_index)
+                row[:cells].last[:border] = @workbook.attribute2BorderFmt(cell_format_index)
               end
             else
               if @workbook.has_formatting?
-                row.last[:font] = nil
-                row.last[:fill] = nil
-                row.last[:border] = nil
+                row[:cells].last[:font] = nil
+                row[:cells].last[:fill] = nil
+                row[:cells].last[:border] = nil
               end
             end
 
@@ -436,7 +442,7 @@ class Dullard::Sheet
           when "f"
             shared_formula = node.attribute("t") == "shared"
             formula_value = nil
-            
+
             if shared_formula
               si = node.attribute("si").to_i
               if @shared_formulas[si]
@@ -449,11 +455,11 @@ class Dullard::Sheet
                   f: formula_value
                 }
               end
-              
+
               # If shared, formula may not have a "child" node containing the formula itself. Instead, record it here
-              row.last[:f] = formula_value
+              row[:cells].last[:f] = formula_value
             end
-             
+
             node_value_type = "f"
             next
           when "t"
@@ -468,7 +474,7 @@ class Dullard::Sheet
         end
 
         value = node.value
-        
+
         if value
           if node_value_type == 'v' || node_value_type == 't'
             case cell_type
@@ -483,13 +489,13 @@ class Dullard::Sheet
                 # leave as string
             end
             cell_type = nil
-            
-            row.last[:v] = (shared ? string_lookup(value.to_i) : value)
+
+            row[:cells].last[:v] = (shared ? string_lookup(value.to_i) : value)
           elsif node_value_type == 'f'
             # If it's a shared formula, this will never be called, since there's no "node" containing the formula string
-            row.last[:f] = value
+            row[:cells].last[:f] = value
           end
-          
+
           node_value_type = nil
         end
       end
@@ -531,20 +537,67 @@ class Dullard::Sheet
     end
   end
 
+def col_widths
+    if @file
+        @file.rewind
+        widths = [nil]
+        doc = Nokogiri::XML(@file)
+        doc.css('/worksheet/cols/col').each do |col|
+            start_col = col.attributes["min"].value.to_i
+            end_col = col.attributes["max"].value.to_i
+            if start_col && col.attributes["customWidth"] && col.attributes["customWidth"].value == "1"
+                while start_col > widths.length
+                    widths << nil
+                end
+
+                # TODO: Update this calculation using more precise character-to-inch-to-point-to-pixel calculations
+                # Sadly, col widths in XLSX files not stored as pixels. They're stored as "# of default characters" wide
+                # This means that we must make two conversions - characters-to-inch (using 100/9 here, default for a new file on my system, though apparently 8.43 was standard for many years?)
+                # And then inches-to-pixel (using 72ppi here, which again is default for me - but that's really not correct, and depends on display)
+                (end_col - start_col + 1).times { widths << (col.attributes["width"].value.to_f / (100.0 / 9.0) * 72.0).to_i }
+            end
+        end
+        return widths
+    end
+end
+
+def row_heights
+    if @file
+        @file.rewind
+        heights = [nil]
+        doc = Nokogiri::XML(@file)
+        doc.css('/worksheet/sheetData/row').each do |row|
+            row_num = row.attributes["r"].value.to_i
+            if row_num && row.attributes["customHeight"] && row.attributes["customHeight"].value == "1"
+                while row_num > heights.length
+                    heights << nil
+                end
+                heights << row.attributes["ht"].value.to_i
+            elsif row.attributes["hidden"]
+                while row_num > heights.length
+                    heights << nil
+                end
+                heights << 0
+            end
+        end
+        return heights
+    end
+end
+
   def generate_formula(new_row, new_col, formula)
     row_diff = new_row - formula[:row]
     col_diff = new_col - formula[:col]
-    
+
     return formula[:f]
-      .gsub(/\$([[:upper:]]+)(\d+)/) { 
+      .gsub(/\$([[:upper:]]+)(\d+)/) {
         # Fixed column, variable row
-        "$#{$1}#{$2.to_i + row_diff}" 
-      }.gsub(/(?<!\$)([[:upper:]]+)\$(\d+)/) { 
+        "$#{$1}#{$2.to_i + row_diff}"
+      }.gsub(/(?<!\$)([[:upper:]]+)\$(\d+)/) {
         # Variable column, fixed row
-        "#{self.class.column_names[self.class.column_names.index($1) + col_diff]}$#{$2}" 
-      }.gsub(/(?<!\$)([[:upper:]]+)(\d+)/) { 
+        "#{self.class.column_names[self.class.column_names.index($1) + col_diff]}$#{$2}"
+      }.gsub(/(?<!\$)([[:upper:]]+)(\d+)/) {
         # Variable column, variable row
-        "#{self.class.column_names[self.class.column_names.index($1) + col_diff]}#{$2.to_i + row_diff}" 
+        "#{self.class.column_names[self.class.column_names.index($1) + col_diff]}#{$2.to_i + row_diff}"
       }
   end
 

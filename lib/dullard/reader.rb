@@ -401,7 +401,6 @@ class Dullard::Sheet
         when Nokogiri::XML::Reader::TYPE_ELEMENT
           case node.name
           when "row"
-              p "===Starting new row #{row_num}==="
             row[:cells] = []
             column = 0
             row_num += 1
@@ -429,7 +428,6 @@ class Dullard::Sheet
             next
           when "c"
             rcolumn = node.attributes["r"]
-            p "===Starting new cell #{rcolumn}==="
             if rcolumn
               rcolumn.delete!("0-9")
               while column < self.class.column_names.size and rcolumn != self.class.column_names[column]
@@ -491,17 +489,22 @@ class Dullard::Sheet
             next
           end
         when Nokogiri::XML::Reader::TYPE_END_ELEMENT
-            p "===Starting new END element #{row.to_json}==="
           if node.name == "row"
             y.yield row
             next
+          elsif node.name == "sheetData"
+            # NOTE: This is where we exit the XML loop - if we reach the end of the enclosing sheetData element, we know that there are no more cells/values/formulas/etc left to parse
+            #   Instead, there are some follow-up tags - such as conditionalFormatting, cfRule, and formula elements
+            #   While we exit the block iterator here, the last row was already yielded by the previous iteration (when it saw a node of type Nokogiri::XML::Reader::TYPE_END_ELEMENT with name "row")
+            # TODO: To add conditional formatting parsing, DON'T exit here, and instead handle cfRule and formula nodes in the Nokogiri::XML::Reader::TYPE_ELEMENT case above
+            #   (as well as the text nodes that come within them - which could complicate the "t" and "v" handling below)
+            break
           end
         end
 
         value = node.value
 
         if value
-            p "===Starting new value #{node_value_type} #{value}==="
           if node_value_type == 'v' || node_value_type == 't'
             case cell_type
               when :datetime

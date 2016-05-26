@@ -283,6 +283,28 @@ class Dullard::Workbook
     @external_links
   end
 
+  def has_macros?
+     return @has_macros if defined?(@has_macros)
+     return read_macros
+  end
+
+  # Added by Dan. Discover macros simply by searching for *.bin files in the root xl directory.
+  # Note we could have also found linked macros by looping through xl/_rels/workbook.xml.rels and pulling out all entries of type = "http://schemas.microsoft.com/office/2006/relationships/vbaProject"
+  # Not sure if remote macros can be linked in - e.g. if workbook.xml.rels could have macro entries while the .XLSM file does NOT actually contain *.bin files - worth checking on this
+  def read_macros
+      @has_macros = false
+      binRegex = Regexp.new("^xl/([^/]+)\\.bin$")
+      @zipfs.each do |filename|
+          match = binRegex.match(fileName.to_s)
+          if !match.nil?
+              @has_macros = true
+              return @has_macros
+          end
+      end
+
+      @has_macros
+  end
+
   # Code borrowed from Roo (https://github.com/hmcgowan/roo/blob/master/lib/roo/excelx.rb)
   # convert internal excelx attribute to a format
   def attribute2format(s)
@@ -379,6 +401,7 @@ class Dullard::Sheet
         when Nokogiri::XML::Reader::TYPE_ELEMENT
           case node.name
           when "row"
+              p "===Starting new row #{row_num}==="
             row[:cells] = []
             column = 0
             row_num += 1
@@ -406,6 +429,7 @@ class Dullard::Sheet
             next
           when "c"
             rcolumn = node.attributes["r"]
+            p "===Starting new cell #{rcolumn}==="
             if rcolumn
               rcolumn.delete!("0-9")
               while column < self.class.column_names.size and rcolumn != self.class.column_names[column]
@@ -467,6 +491,7 @@ class Dullard::Sheet
             next
           end
         when Nokogiri::XML::Reader::TYPE_END_ELEMENT
+            p "===Starting new END element #{row.to_json}==="
           if node.name == "row"
             y.yield row
             next
@@ -476,6 +501,7 @@ class Dullard::Sheet
         value = node.value
 
         if value
+            p "===Starting new value #{node_value_type} #{value}==="
           if node_value_type == 'v' || node_value_type == 't'
             case cell_type
               when :datetime
@@ -554,6 +580,9 @@ def col_widths
                 # Sadly, col widths in XLSX files not stored as pixels. They're stored as "# of default characters" wide
                 # This means that we must make two conversions - characters-to-inch (using 100/9 here, default for a new file on my system, though apparently 8.43 was standard for many years?)
                 # And then inches-to-pixel (using 72ppi here, which again is default for me - but that's really not correct, and depends on display)
+
+                # NOTE: Calculation here matches the calculation in Cells/models/cell_sheet.rb for file downloading
+
                 (end_col - start_col + 1).times { widths << (col.attributes["width"].value.to_f / (100.0 / 9.0) * 72.0).to_i }
             end
         end

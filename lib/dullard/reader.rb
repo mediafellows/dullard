@@ -21,11 +21,11 @@ class Dullard::Workbook
     'd-mmm-yy' => :date,
     'd-mmm' => :date,
     'mmm-yy' => :date,
-    'h:mm am/pm' => :date,
-    'h:mm:ss am/pm' => :date,
+    'h:mm am/pm' => :time,
+    'h:mm:ss am/pm' => :time,
     'h:mm' => :time,
     'h:mm:ss' => :time,
-    'm/d/yy h:mm' => :date,
+    'm/d/yy h:mm' => :datetime,
     '#,##0 ;(#,##0)' => :float,
     '#,##0 ;[red](#,##0)' => :float,
     '#,##0.00;(#,##0.00)' => :float,
@@ -248,13 +248,26 @@ class Dullard::Workbook
       end
     end
     doc.css('/styleSheet/cellXfs/xf').each do |xf|
+      # Alignment and word wrap
+      if include_formatting
+        alignment = {}
+        alignments = xf.css('/alignment')
+        if !alignments.empty?
+          if alignments.first.attributes.has_key?('horizontal') then alignment['horizontal'] = alignments.first.attributes['horizontal'].value; end
+          if alignments.first.attributes.has_key?('vertical')   then alignment['vertical'] = alignments.first.attributes['vertical'].value; end
+          if alignments.first.attributes.has_key?('wrapText')   then alignment['wrapText'] = true; end
+        end
+      end
+
+      # Generate format object
       @cell_xfs << (!include_formatting \
       ? { numFmtId: xf.attributes['numFmtId'].value.to_i }
       : {
         numFmtId: xf.attributes['numFmtId'].value.to_i,
         fontId: xf.attributes['fontId'].value.to_i,
         fillId: xf.attributes['fillId'].value.to_i,
-        borderId: xf.attributes['borderId'].value.to_i
+        borderId: xf.attributes['borderId'].value.to_i,
+        alignment: alignments.empty? ? nil : alignment
       })
     end
   end
@@ -321,13 +334,27 @@ class Dullard::Workbook
   end
 
   # Code borrowed from Roo (https://github.com/hmcgowan/roo/blob/master/lib/roo/excelx.rb)
+  # Updated by Dan Adler
   def format2type(format)
     if FORMATS.has_key? format
       FORMATS[format]
     elsif @user_defined_formats.has_key? format
       @user_defined_formats[format]
     else
-      :float
+      # Previously, just return :float here...
+      # Instead, updating to correctly identify dates/times from numeric formats
+      # Step 1, remove all quoted (i.e., displayed as non-replaced static text) sections
+      adj_format = format.gsub /\".*?\"/, ""
+      # Step 2, check if a date, a datetime, or a time
+      if (adj_format.include?("y") || adj_format.include?("d") || adj_format.include?("m")) && !(adj_format.include?("h") || adj_format.include?("s"))
+        :date
+      elsif (adj_format.include?("y") || adj_format.include?("d") || adj_format.include?("mmm")) && (adj_format.include?("h") || adj_format.include?("s"))
+        :datetime
+      elsif !(adj_format.include?("y") || adj_format.include?("d") || adj_format.include?("mmm")) && (adj_format.include?("h") || adj_format.include?("s"))
+        :time
+      else
+        :float
+      end
     end
   end
 
@@ -344,6 +371,10 @@ class Dullard::Workbook
   def attribute2BorderFmt(s)
     id = @cell_xfs[s.to_i][:borderId].to_i
     return id == 0 ? nil : @border_formats[id]
+  end
+
+  def attribute2Alignment(s)
+    return @cell_xfs[s.to_i][:alignment] # nil if xf didn't have an <alignment> child
   end
 
   def node2color(color_node)
@@ -436,22 +467,30 @@ class Dullard::Sheet
               end
             end
 
-            row[:cells] << {c: column, v: nil, f: nil}
+            row[:cells] << {c: column, v: nil, f: nil, type: nil}
 
             if node.attributes.has_key?('s') && (@workbook.has_formatting? || (node.attributes['t'] != 's' && node.attributes['t'] != 'b'))
               cell_format_index = node.attributes['s'].to_i
-              cell_type = @workbook.format2type(@workbook.attribute2format(cell_format_index))
+              cell_num_format = @workbook.attribute2format(cell_format_index)
+              cell_type = @workbook.format2type(cell_num_format)
+
+              # Value alone not sufficient to determine type - dates/times generally appear as numbers (in the seconds since whatever date format), so need to store this specifically
+              row[:cells].last[:type] = cell_type
 
               if @workbook.has_formatting?
+                row[:cells].last[:num_format] = cell_num_format
                 row[:cells].last[:font] = @workbook.attribute2FontFmt(cell_format_index)
                 row[:cells].last[:fill] = @workbook.attribute2FillFmt(cell_format_index)
                 row[:cells].last[:border] = @workbook.attribute2BorderFmt(cell_format_index)
+                row[:cells].last[:alignment] = @workbook.attribute2Alignment(cell_format_index)
               end
             else
               if @workbook.has_formatting?
+                row[:cells].last[:num_format] = nil
                 row[:cells].last[:font] = nil
                 row[:cells].last[:fill] = nil
                 row[:cells].last[:border] = nil
+                row[:cells].last[:alignment] = nil
               end
             end
 
@@ -494,9 +533,9 @@ class Dullard::Sheet
             next
           elsif node.name == "sheetData"
             # NOTE: This is where we exit the XML loop - if we reach the end of the enclosing sheetData element, we know that there are no more cells/values/formulas/etc left to parse
-            #   Instead, there are some follow-up tags - such as conditionalFormatting, cfRule, and formula elements
+            #   Instead, there are some follow-up tags - such as conditionalFormatting, cfRule, mergeCells/mergeCell, and formula elements
             #   While we exit the block iterator here, the last row was already yielded by the previous iteration (when it saw a node of type Nokogiri::XML::Reader::TYPE_END_ELEMENT with name "row")
-            # TODO: To add conditional formatting parsing, DON'T exit here, and instead handle cfRule and formula nodes in the Nokogiri::XML::Reader::TYPE_ELEMENT case above
+            # TODO: To add conditional formatting or merged cell parsing, DON'T exit here, and instead handle cfRule and formula or mergeCell nodes in the Nokogiri::XML::Reader::TYPE_ELEMENT case above
             #   (as well as the text nodes that come within them - which could complicate the "t" and "v" handling below)
             break
           end
@@ -507,11 +546,9 @@ class Dullard::Sheet
         if value
           if node_value_type == 'v' || node_value_type == 't'
             case cell_type
-              when :datetime
-              when :time
-              when :date
+              when :datetime, :time, :date
                 value = (DateTime.new(1899,12,30) + value.to_f)
-              when :percentage # ? TODO
+              when :percentage # Do nothing
               when :float
                 value = value.to_f
               else

@@ -374,7 +374,8 @@ class Dullard::Workbook
   end
 
   def attribute2Alignment(s)
-    return @cell_xfs[s.to_i][:alignment] # nil if xf didn't have an <alignment> child
+	   # nil if xf didn't have an <alignment> child
+	  return @cell_xfs[s.to_i][:alignment].nil? ? nil : @cell_xfs[s.to_i][:alignment].symbolize_keys
   end
 
   def node2color(color_node)

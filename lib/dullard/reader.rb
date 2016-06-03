@@ -342,11 +342,13 @@ class Dullard::Workbook
       @user_defined_formats[format]
     else
       # Previously, just return :float here...
-      # Instead, updating to correctly identify dates/times from numeric formats
+      # Instead, updating to correctly identify percents, dates/times from numeric formats
       # Step 1, remove all quoted (i.e., displayed as non-replaced static text) sections
       adj_format = format.gsub /\".*?\"/, ""
-      # Step 2, check if a date, a datetime, or a time
-      if (adj_format.include?("y") || adj_format.include?("d") || adj_format.include?("m")) && !(adj_format.include?("h") || adj_format.include?("s"))
+      # Step 2, check if a percent, s date, a datetime, or a time
+	  if adj_format.include?("%")
+		:percentage
+      elsif (adj_format.include?("y") || adj_format.include?("d") || adj_format.include?("m")) && !(adj_format.include?("h") || adj_format.include?("s"))
         :date
       elsif (adj_format.include?("y") || adj_format.include?("d") || adj_format.include?("mmm")) && (adj_format.include?("h") || adj_format.include?("s"))
         :datetime

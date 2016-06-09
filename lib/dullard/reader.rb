@@ -318,6 +318,64 @@ class Dullard::Workbook
       @has_macros
   end
 
+  # Added by Dan. Discover "drawings" - inserted objects like pictures, shapes
+  def drawings
+	@drawings || read_drawings
+  end
+
+  def read_drawings
+	  @drawing_links = []
+	  @drawings = []
+
+	  # First, loop over all files located in xl/drawings/_rels and extract filenames of externally stored media (e.g., pictures/images)
+      path = "xl/drawings/_rels/"
+	  subDirEntriesRegex = Regexp.new("^#{path}([^/]+)$")
+	  @zipfs.each do |fileName|
+		match = subDirEntriesRegex.match(fileName.to_s)
+		if !match.nil?
+		  doc = Nokogiri::XML(@zipfs.file.open(fileName.to_s))
+		  doc.css('/Relationships/Relationship').each do |drawing|
+			target = drawing.attributes['Target'].value
+			@drawing_links << { :file_id => match[1].reverse[9].to_i, :rel_id => drawing.attributes['Id'].value, :target => target, :file => @zipfs.file.open("xl/drawings/#{target}") }
+		  end
+		end
+	  end
+
+      # Second, loop over all XML files located in xl/drawings and extract embedded images details
+      path = "xl/drawings/"
+      subDirEntriesRegex = Regexp.new("^#{path}([^/]+)\\.xml$")
+      @zipfs.each do |fileName|
+        match = subDirEntriesRegex.match(fileName.to_s)
+        if !match.nil?
+          doc = Nokogiri::XML(@zipfs.file.open(fileName.to_s))
+          doc.css('/xdr:wsDr/xdr:twoCellAnchor').each do |two_cell_anchor|
+			  from_node = two_cell_anchor.css('/xdr:from')
+			  to_node = two_cell_anchor.css('/xdr:to')
+			  pic_node = two_cell_anchor.css('/xdr:pic')
+			  shape_node = two_cell_anchor.css('/xdr:sp')
+			  type = pic_node.length > 0 ? :pic : (shape_node.length > 0 ? :shape : :other)
+
+			  #  link pics to File objects of stored media, extracted in the @drawing_links loop above
+			  media = nil
+			  if type == :pic
+				  rel_id = pic_node.css('/xdr:blipFill/a:blip').first.attributes['r:embed'].value
+				  media_link = @drawing_links.find { |link| link[:file_id] == match[1].reverse[0].to_i && link[:rel_id] == rel_id }
+			  end
+
+			  # Finally, populate the @drawings object
+			  @drawings << {
+				  from: { col: from_node.css('/xdr:col').first.value.to_i, col_offset: from_node.css('/xdr:colOff').first.value.to_i, row: from_node.css('/xdr:row').first.value.to_i, row_offset: from_node.css('/xdr:rowOff').first.value.to_i },
+			   	  to: { col: to_node.css('/xdr:col').first.value.to_i, col_offset: to_node.css('/xdr:colOff').first.value.to_i, row: to_node.css('/xdr:row').first.value.to_i, row_offset: to_node.css('/xdr:rowOff').first.value.to_i },
+				  type: type,
+				  media: media[:file]
+			  }
+          end
+        end
+      end
+
+      @drawings
+  end
+
   # Code borrowed from Roo (https://github.com/hmcgowan/roo/blob/master/lib/roo/excelx.rb)
   # convert internal excelx attribute to a format
   def attribute2format(s)

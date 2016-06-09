@@ -336,38 +336,50 @@ class Dullard::Workbook
 		  doc = Nokogiri::XML(@zipfs.file.open(fileName.to_s))
 		  doc.css('/Relationships/Relationship').each do |drawing|
 			target = drawing.attributes['Target'].value
-			@drawing_links << { :file_id => match[1].reverse[9].to_i, :rel_id => drawing.attributes['Id'].value, :target => target, :file => @zipfs.file.open("xl/drawings/#{target}") }
+			@drawing_links << { :sheet_id => match[1].reverse[9].to_i, :rel_id => drawing.attributes['Id'].value, :target => target, :file => @zipfs.file.open("xl/drawings/#{target}") }
 		  end
 		end
 	  end
 
       # Second, loop over all XML files located in xl/drawings and extract embedded images details
+	  # NOTE: "xdr:"s in xml documents are interpreted as namespaces, so use namespace separator - the pipe char - during css() searches
       path = "xl/drawings/"
       subDirEntriesRegex = Regexp.new("^#{path}([^/]+)\\.xml$")
       @zipfs.each do |fileName|
         match = subDirEntriesRegex.match(fileName.to_s)
         if !match.nil?
           doc = Nokogiri::XML(@zipfs.file.open(fileName.to_s))
-          doc.css('/xdr:wsDr/xdr:twoCellAnchor').each do |two_cell_anchor|
-			  from_node = two_cell_anchor.css('/xdr:from')
-			  to_node = two_cell_anchor.css('/xdr:to')
-			  pic_node = two_cell_anchor.css('/xdr:pic')
-			  shape_node = two_cell_anchor.css('/xdr:sp')
-			  type = pic_node.length > 0 ? :pic : (shape_node.length > 0 ? :shape : :other)
+          doc.css('/xdr|wsDr/xdr|twoCellAnchor').each do |two_cell_anchor|
+			  from_node = two_cell_anchor.css('/xdr|from')
+			  to_node = two_cell_anchor.css('/xdr|to')
+			  pic_node = two_cell_anchor.css('/xdr|pic')
+			  shape_node = two_cell_anchor.css('/xdr|sp')
+			  type = !pic_node.empty? ? :pic : (!shape_node.empty? ? :shape : :other)
 
 			  #  link pics to File objects of stored media, extracted in the @drawing_links loop above
-			  media = nil
+			  media_link = nil
 			  if type == :pic
-				  rel_id = pic_node.css('/xdr:blipFill/a:blip').first.attributes['r:embed'].value
-				  media_link = @drawing_links.find { |link| link[:file_id] == match[1].reverse[0].to_i && link[:rel_id] == rel_id }
+				  rel_id = pic_node.css('/xdr|blipFill/a|blip').first.attributes['embed'].value
+				  media_link = @drawing_links.find { |link| link[:sheet_id] == match[1].reverse[0].to_i && link[:rel_id] == rel_id }[:file]
 			  end
 
 			  # Finally, populate the @drawings object
+			  # NOTE: rows and cols are zero-based when it comes to drawing/"xdr:..." attributes, so add 1
+			  # NOTE: convert all xdr:rowOff and xdr:colOff (measured in "EMUs" or English Metric Units) to pixels, using calculation found here: https://startbigthinksmall.wordpress.com/2010/01/04/points-inches-and-emus-measuring-units-in-office-open-xml/
 			  @drawings << {
-				  from: { col: from_node.css('/xdr:col').first.value.to_i, col_offset: from_node.css('/xdr:colOff').first.value.to_i, row: from_node.css('/xdr:row').first.value.to_i, row_offset: from_node.css('/xdr:rowOff').first.value.to_i },
-			   	  to: { col: to_node.css('/xdr:col').first.value.to_i, col_offset: to_node.css('/xdr:colOff').first.value.to_i, row: to_node.css('/xdr:row').first.value.to_i, row_offset: to_node.css('/xdr:rowOff').first.value.to_i },
+				  sheet_index: match[1].reverse[0].to_i,
+				  from: {
+					  col: from_node.css('/xdr|col').first.text.to_i + 1,
+					  col_offset: from_node.css('/xdr|colOff').first.text.to_f / 914400 * 72,
+					  row: from_node.css('/xdr|row').first.text.to_i + 1,
+					  row_offset: from_node.css('/xdr|rowOff').first.text.to_f / 914400 * 72 },
+			   	  to: {
+					  col: to_node.css('/xdr|col').first.text.to_i + 1,
+					  col_offset: to_node.css('/xdr|colOff').first.text.to_f / 914400 * 72, 
+					  row: to_node.css('/xdr|row').first.text.to_i + 1,
+					  row_offset: to_node.css('/xdr|rowOff').first.text.to_f / 914400 * 72 },
 				  type: type,
-				  media: media[:file]
+				  media: media_link
 			  }
           end
         end
@@ -663,6 +675,10 @@ class Dullard::Sheet
       end
     end
   end
+
+def drawings
+	workbook.drawings.select { |drawing| drawing[:sheet_index] == @index }
+end
 
 def col_widths
     if @file

@@ -30,6 +30,8 @@ class Dullard::Workbook
     '#,##0 ;[red](#,##0)' => :float,
     '#,##0.00;(#,##0.00)' => :float,
     '#,##0.00;[red](#,##0.00)' => :float,
+	# '#,##0_);[Red]($#,##0)' => :float, 			# Dan
+	# '#,##0.00_);[Red]($#,##0.00)' => :float, 	# Dan
     'mm:ss' => :time,
     '[h]:mm:ss' => :time,
     'mmss.0' => :time,
@@ -375,7 +377,7 @@ class Dullard::Workbook
 					  row_offset: from_node.css('/xdr|rowOff').first.text.to_f / 914400 * 72 },
 			   	  to: {
 					  col: to_node.css('/xdr|col').first.text.to_i + 1,
-					  col_offset: to_node.css('/xdr|colOff').first.text.to_f / 914400 * 72, 
+					  col_offset: to_node.css('/xdr|colOff').first.text.to_f / 914400 * 72,
 					  row: to_node.css('/xdr|row').first.text.to_i + 1,
 					  row_offset: to_node.css('/xdr|rowOff').first.text.to_f / 914400 * 72 },
 				  type: type,
@@ -411,20 +413,29 @@ class Dullard::Workbook
     elsif @user_defined_formats.has_key? format
       @user_defined_formats[format]
     else
+		p ">>>>>>>>>>>>>>>>>>>>>>> NO FORMAT IDENTIFIED FOR F: #{format}"
       # Previously, just return :float here...
       # Instead, updating to correctly identify percents, dates/times from numeric formats
       # Step 1, remove all quoted (i.e., displayed as non-replaced static text) sections
       adj_format = format.gsub /\".*?\"/, ""
+
+	  p ">>>>>>>>>>>>>>>>>>>>>>> AFTER ADJ F: #{adj_format}"
       # Step 2, check if a percent, s date, a datetime, or a time
 	  if adj_format.include?("%")
+		  p ">>>>>>>>>>>>>>>>>>>>>>> PERCENT"
+
 		:percentage
       elsif (adj_format.include?("y") || adj_format.include?("d") || adj_format.include?("m")) && !(adj_format.include?("h") || adj_format.include?("s"))
+		  p ">>>>>>>>>>>>>>>>>>>>>>> DATE"
         :date
       elsif (adj_format.include?("y") || adj_format.include?("d") || adj_format.include?("mmm")) && (adj_format.include?("h") || adj_format.include?("s"))
+		  p ">>>>>>>>>>>>>>>>>>>>>>> DATETIME"
         :datetime
       elsif !(adj_format.include?("y") || adj_format.include?("d") || adj_format.include?("mmm")) && (adj_format.include?("h") || adj_format.include?("s"))
+		  p ">>>>>>>>>>>>>>>>>>>>>>> TIME"
         :time
       else
+		  p ">>>>>>>>>>>>>>>>>>>>>>> FLOAT"
         :float
       end
     end

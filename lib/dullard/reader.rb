@@ -104,7 +104,7 @@ class Dullard::Workbook
     6 => 'FF00FF',
     7 => '00FFFF',
     8 => '000000',
-    0 => 'FFFFFF',
+    9 => 'FFFFFF',
     10 => 'FF0000',
     11 => '00FF00',
     12 => '0000FF',
